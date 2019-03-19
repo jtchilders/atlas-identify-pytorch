@@ -72,7 +72,8 @@ def main():
    input_channels = int(blocks[0]['channels'])
    logger.info(' input_shape: %s  input_channels: %s',input_shape,input_channels)
    net = Net2D(input_shape,input_channels)
-   logger.info('model: \n%s',summary(input_shape,input_channels,net))
+   summary_string,output_shape,output_channels = summary(input_shape,input_channels,net)
+   logger.info('model: \n%s',summary_string)
    import sys
    sys.exit(0)
 
@@ -218,20 +219,38 @@ def get_filelist(net_opts,args,rank,nranks):
 def print_module(module,input_shape,input_channels,name=None,indent=0):
 
    output_string = ''
+   output_channels = input_channels
+   output_shape = input_shape
 
-   output_string += ' ' * indent
+   output_string += '%10s' % ('>' * indent)
    if name:
-      output_string += ' ' + name
+      output_string += ' %20s' % name
    else:
-      output_string += ' %s' % module.__class__.__name__
+      output_string += ' %20s' % module.__class__.__name__
+
+   # convolutions change channels
+   if 'submanifoldconv' in module.__class__.__name__.lower():
+      output_string += ' %4d -> %4d ' % (module.nIn,module.nOut)
+      output_channels = module.nOut
+   elif 'conv' in module.__class__.__name__.lower():
+      output_string += ' %4d -> %4d ' % (module.in_channels,module.out_channels)
+      output_channels = module.out_channels
+   elif 'pool' in module.__class__.__name__.lower():
+      output_shape = [int(input_shape[i] / module.pool_size[i]) for i in range(len(input_shape))]
+      output_string += ' %10s -> %10s ' % (input_shape, output_shape)
+   elif 'batchnormleakyrelu' in module.__class__.__name__.lower():
+      output_string += ' (%10s) ' % module.nPlanes
+   elif 'batchnorm2d' in module.__class__.__name__.lower():
+      output_string += ' (%10s) ' % module.num_features
+
+
    output_string += '\n'
 
-   
-
    for name, child in module.named_children():
-      output_string += print_module(child, name, indent + 1)
+      string,output_shape,output_channels = print_module(child, output_shape, output_channels, name, indent + 1)
+      output_string += string
 
-   return output_string
+   return output_string,output_shape,output_channels
 
 
 def summary(input_shape,input_channels,model):
