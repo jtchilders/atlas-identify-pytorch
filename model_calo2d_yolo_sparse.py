@@ -1,9 +1,7 @@
 import torch.nn as nn
 import torch
 import logging
-import loss_func
 import sparseconvnet as scn
-from collections import OrderedDict 
 logger = logging.getLogger(__name__)
 
 
@@ -44,7 +42,7 @@ class DensePartBlock2D(nn.Module):
       self.conv = nn.Conv2d(nIn,nOut,filter_size,stride=1, padding=0, dilation=1, groups=1, bias=False)
       self.bnorm = nn.BatchNorm2d(nOut)
       self.lrelu = nn.LeakyReLU()
-      
+
       self.add_module('conv2d_%2d' % layer_number,self.conv)
       self.add_module('bnorm_%2d' % layer_number,self.bnorm)
       self.add_module('lrelu_%2d' % layer_number,self.lrelu)
@@ -130,7 +128,7 @@ class Net2D(nn.Module):
       self.preconnect_sp2dn = scn.SparseToDense(2,512)
       self.postconnect_sp2dn = scn.SparseToDense(2,1024)
 
-      self.CombinedLayer = DensePartBlock2D(1024+512,1024,(1,1),layer_number)
+      self.CombinedLayer = DensePartBlock2D(1024 + 512,1024,(1,1),layer_number)
 
       self.LastConv = nn.Conv2d(1024,4,(1,1))
 
@@ -163,10 +161,11 @@ def Conv2D(nIn, nOut,
            filter_size=(3,3), dimension=2, bias=False):
    return scn.SubmanifoldConvolution(dimension, nIn, nOut, filter_size, bias)
 
+
 def BatchNormLeakyReLU(nPlanes, eps=1e-4, momentum=0.9, leakiness=0.333):
    return scn.BatchNormLeakyReLU(nPlanes,eps,momentum,leakiness)
 
-def MaxPool2D(pool_size, pool_stride=None,dimension=2,nFeaturesToDrop=0):
-   if pool_stride is None: pool_stride=pool_size
-   return scn.MaxPooling(dimension, pool_size, pool_stride, nFeaturesToDrop)
 
+def MaxPool2D(pool_size, pool_stride=None,dimension=2,nFeaturesToDrop=0):
+   if pool_stride is None: pool_stride = pool_size
+   return scn.MaxPooling(dimension, pool_size, pool_stride, nFeaturesToDrop)

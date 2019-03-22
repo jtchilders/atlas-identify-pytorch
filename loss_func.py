@@ -40,10 +40,10 @@ class ClassOnlyLoss(torch.nn.Module):
       # truth_grid_class = target[:,1,...]
       # class_loss = torch.sum( (pred_grid_class.float() - truth_grid_class.float()) ** 2 * true_grid_conf.float())
 
-      logger.info('class_loss: %10.6f  grid_id_loss: %10.6f',class_loss.item(),grid_id_loss.item())
-      loss = grid_id_loss + class_loss
+      # logger.info('class_loss: %10.6f  grid_id_loss: %10.6f',class_loss.item(),grid_id_loss.item())
+      # loss = grid_id_loss + class_loss
 
-      return loss
+      return grid_id_loss,class_loss
 
 
 class ClassOnlyAccuracy:

@@ -53,7 +53,7 @@ class BatchGenerator(Dataset):
 
    def get_batch(self,file_index,batch_index):
       # logger.info('in getitem idx: %s', idx)
-      start = time.time()
+      # start = time.time()
       if self.fileindex != file_index or self.raw is None:
          # set historical file index
          self.fileindex = file_index
@@ -66,11 +66,11 @@ class BatchGenerator(Dataset):
 
          try:
             logger.info('opening file: %s',filename)
-            nf = np.load(filename)
+            nf = np.load(filename,allow_pickle=True)
             self.raw = nf['raw']
             self.truth = nf['truth']
 
-            a = time.time()
+            # a = time.time()
             self.truth = self.convert_truth(self.truth)
             # logger.info('convert_truth time: %s',time.time() - a)
          except:
@@ -81,7 +81,7 @@ class BatchGenerator(Dataset):
       coords,features = self.get_raw_batch(self.raw,batch_index)
 
       self.batchindex = batch_index
-      
+
       # logger.info('batch time: %s',time.time() - start)
       return {'images': [torch.from_numpy(coords).long(),torch.from_numpy(features).float()],
               'truth': torch.from_numpy(self.truth[batch_index * self.batch_size:(batch_index + 1) * self.batch_size]).double()}
@@ -100,7 +100,7 @@ class BatchGenerator(Dataset):
          for obj_num in range(len(img_truth)):
             obj_truth = img_truth[obj_num]
 
-            obj_exists   = obj_truth[0]
+            obj_exists = obj_truth[0]
 
             if obj_exists == 1:
 
@@ -144,7 +144,3 @@ class BatchGenerator(Dataset):
          current_length += length
 
       return coords,features
-
-
-
-
