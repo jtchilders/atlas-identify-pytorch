@@ -1,5 +1,5 @@
 import torch
-import logging,time
+import logging,multiprocessing as mp
 import numpy as np
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class BatchGenerator:
 
       self.use_random   = use_random
 
-      self.man          = torch.multiprocessing.Manager()
+      self.man          = mp.Manager()
       self.queue        = self.man.Queue(maxsize=max_queue)
 
    @staticmethod
@@ -38,7 +38,7 @@ class BatchGenerator:
       for f in self.filelist:
          args.append((f,self.img_shape,self.grid_shape,self.queue))
 
-      p = torch.multiprocessing.Pool(num_procs)
+      p = mp.Pool(num_procs)
       self.results = p.map_async(file_proc,args)
       
    def __len__(self):
