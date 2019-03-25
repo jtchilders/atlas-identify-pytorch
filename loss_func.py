@@ -14,21 +14,27 @@ class ClassOnlyLoss(torch.nn.Module):
 
       # logger.info('output shape: %s target shape: %s',output.shape,target.shape)
 
-      # output shape = (batch,3,grid_h,grid_w)
+      # output shape = (batch,4,grid_h,grid_w)
       # target shape = (batch,2,grid_h,grid_w)
       # flattened_output = torch.flatten(output,start_dim=1, end_dim=2)
       # flattened_target = torch.flatten(target,start_dim=1, end_dim=2)
 
       #cutout = torch.gt(output[...],self.cut).float()
 
-      pred_grid_conf = output[:,0,...].float()  # .sigmoid()
+      pred_grid_conf = output[:,0,...].float()
       true_grid_conf = target[:,0,...].float()
 
       # agreement of grid level object exits label
       # grid_id_loss = torch.sum( (true_grid_conf - pred_grid_conf) ** 2 )
-      grid_id_loss = torch.nn.MSELoss()(pred_grid_conf,true_grid_conf)
+      grid_id_loss = torch.nn.BCEWithLogitsLoss()(pred_grid_conf,true_grid_conf)
 
-      class_loss = torch.nn.CrossEntropyLoss(reduction='none')(output[:,1:3,...].float(),target[:,1,...].long())
+      # convert prediction to log probabilities
+
+      pred_class_conf = torch.nn.functional.log_softmax(output[:,1:4,...],1)
+
+      true_class = target[:,1,...].long()
+
+      class_loss = torch.nn.CrossEntropyLoss(reduction='none')(pred_class_conf,true_class)
 
       class_loss = class_loss * true_grid_conf
       class_loss = torch.sum(torch.sum(class_loss,1),1)
@@ -55,15 +61,23 @@ class ClassOnlyAccuracy:
 
       # get entries with prediction above some threshold
       # and where they are equal to truth
-      cutout = torch.gt(output[...],self.cut).float()
+      # logger.info('output = %s, target = %s',output.shape,target.shape)
+      cutout = torch.gt(output.sigmoid(),self.cut).float()
+      # logger.info('cut out = %s',cutout.shape)
 
       pred_grid_conf = cutout[:,0,...]
+      # logger.info('pred_grid_conf = %s',pred_grid_conf.shape)
       true_grid_conf = target[:,0,...].float()
+      # logger.info('true_grid_conf = %s %s %s %s',true_grid_conf.shape,true_grid_conf.min(),true_grid_conf.max(),true_grid_conf.sum())
 
       b = torch.eq(pred_grid_conf,true_grid_conf).float() * true_grid_conf
+      # logger.info('b = %s %s %s %s',b.shape,b.min(),b.max(),b.sum())
       # logger.info('pred_grid_conf: %s  true_grid_conf: %s  b: %s',pred_grid_conf.sum(),true_grid_conf.sum(),b.sum())
-      c = torch.sum(b).item()
-      d = torch.sum(true_grid_conf).item()
+      c = b.sum(dim=1).sum(dim=1)
+      # logger.info('c = %s',c.shape)
+      d = true_grid_conf.sum(dim=1).sum(dim=1)
+      # logger.info('d = %s',d.shape)
       grid_acc = c / d
+      # logger.info('grid_acc = %s',grid_acc.shape)
 
       return grid_acc

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-import argparse, logging, glob
+import argparse, logging, glob, socket
 import numpy as np
 import cfg,time,loss_func
 #from data_handler_calo2d_sparse_npz import BatchGenerator
@@ -25,6 +25,8 @@ def main():
    parser.add_argument('--nval_tests',default=1,type=int,help='number batches to test per validation run')
 
    parser.add_argument('--status',default=20,type=int,help='frequency to print loss status in batch numbers')
+
+   parser.add_argument('--batch',default=-1,type=int,help='set batch size, overrides file config')
 
    parser.add_argument('--random_seed',default=0,type=int,help='numpy random seed')
 
@@ -70,6 +72,8 @@ def main():
                        filename=args.logfilename)
 
    logger.info('rank %s of %s',rank,nranks)
+   logger.info('hostname:           %s',socket.gethostname())
+
    logger.info('config file:        %s',args.config_file)
    logger.info('num files:          %s',args.num_files)
    logger.info('model_save:         %s',args.model_save)
@@ -100,6 +104,8 @@ def main():
       logger.info('hvd broadcast')
       hvd.broadcast_parameters(net.state_dict(),root_rank=0)
 
+   if args.batch > 0:
+      blocks[0]['batch'] = args.batch
    net_opts = blocks[0]
 
    logger.info('getting filelists')
@@ -120,13 +126,11 @@ def main():
    trainds = BatchGenerator(trainlist,evt_per_file,
                             batch_size,img_shape,grid_shape,
                             num_classes)
-   trainds.start_file_pool()
    #trainds.set_random_batch_retrieval()
    validds = BatchGenerator(validlist,evt_per_file,
                             batch_size,img_shape,grid_shape,
                             num_classes)
    validds.start_file_pool(1)
-
    net_loss = loss_func.ClassOnlyLoss()
 
    optimizer = optim.SGD(net.parameters(),lr=float(net_opts['learning_rate']), momentum=float(net_opts['momentum']))
@@ -144,6 +148,10 @@ def main():
    for epoch in range(args.epochs):
       logger.info(' epoch %s',epoch)
       scheduler.step()
+      trainds.start_file_pool()
+
+      for param_group in optimizer.param_groups:
+         logging.info('learning rate: %s',param_group['lr'])
 
       net.train()
       batch_counter = 0
@@ -164,7 +172,6 @@ def main():
          loss = grid_id_loss + class_loss
 
          start_backward = time.time()
-
          loss.backward()
          optimizer.step()
 
@@ -182,11 +189,15 @@ def main():
             if batch_counter % args.status == 0:
                mean_img_per_second = (forward_time.calc_mean() + backward_time.calc_mean()) / batch_size
                
-               logger.info('[%3d of %3d, %5d of %5d] loss: %6.4f + %6.4f = %6.4f   sec/image: %6.2f   data time: %6.3f  forward time: %6.3f  backward time: %6.3f',epoch + 1,args.epochs,batch_counter + 1,len(trainds),grid_id_loss.item(),class_loss.item(),loss.item(),mean_img_per_second,data_time.calc_mean(),forward_time.calc_mean(),backward_time.calc_mean())
+               logger.info('[%3d of %3d, %5d of %5d] loss: %6.4f + %6.4f = %6.4f   sec/image: %6.2f   data time: %6.3f  forward time: %6.3f  backward time: %6.3f',epoch + 1,args.epochs,batch_counter,len(trainds),grid_id_loss.item(),class_loss.item(),loss.item(),mean_img_per_second,data_time.calc_mean(),forward_time.calc_mean(),backward_time.calc_mean())
 
             if batch_counter % args.nval == 0:
                logger.info('running validation')
                net.eval()
+
+               if validds.reached_end:
+                  logger.warning('restarting validation file pool.')
+                  validds.start_file_pool(1)
 
                valid_counter = 0
                for batch_data in validds.batch_gen():
@@ -199,7 +210,7 @@ def main():
                   grid_id_loss,class_loss = net_loss(outputs,targets)
                   loss = grid_id_loss + class_loss
 
-                  logger.info('valid loss: %6.4f + %6.4f = %6.4f accuracy: %10.3f',grid_id_loss.item(),class_loss.item(),loss.item(),acc)
+                  logger.info('valid loss: %6.4f + %6.4f = %6.4f accuracy: %s',grid_id_loss.item(),class_loss.item(),loss.item(),acc)
                   valid_counter += 1
                   if valid_counter >= args.nval_tests: break
 
@@ -208,6 +219,8 @@ def main():
             if batch_counter % args.nsave == 0:
                torch.save(net.state_dict(),args.model_save + '_%05d_%05d.torch_model_state_dict' % (epoch,batch_counter))
 
+      # logger.info('result ready: %s',trainds.results.ready())
+      # logger.info('result: %s',trainds.results.get())
 
 '''
    for epoch in range(args.epochs):

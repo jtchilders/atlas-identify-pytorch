@@ -25,6 +25,10 @@ class BatchGenerator:
       self.man          = mp.Manager()
       self.queue        = self.man.Queue(maxsize=max_queue)
 
+      self.reached_end  = False
+
+      self.pool         = None
+
    @staticmethod
    def report_done(result):
       logger.info('done: %s',result)
@@ -33,13 +37,20 @@ class BatchGenerator:
       if self.use_random:
          np.random.shuffle(self.filelist)
 
+      if self.pool is not None:
+         logger.info('close and join pool')
+         self.pool.close()
+         logger.info('pool closed')
+         self.pool.join()
+         logger.info('pool joined')
+
       args = []
 
       for f in self.filelist:
          args.append((f,self.img_shape,self.grid_shape,self.queue))
 
-      p = mp.Pool(num_procs)
-      self.results = p.map_async(file_proc,args)
+      self.pool = mp.Pool(num_procs)
+      self.results = self.pool.map_async(file_proc,args)
       
    def __len__(self):
       return self.total_batches
@@ -69,6 +80,9 @@ class BatchGenerator:
          raw_coords     = None
          raw_features   = None
          truth_batch    = None
+      
+      logger.warning('reached end of dataset')
+      self.reached_end = True
 
    def merge_raw(self,raw,raw_coords,raw_features,image_counter):
       #raw = torch.from_numpy(raw)
@@ -162,12 +176,17 @@ class FileGenerator:
 
 
 def convert_truth(intruth,img_width,img_height,grid_w,grid_h,new_channels=2):
+   # channel 0 = grid classifier, 1 = object class (0=jet,1=lepton,2=neither)
    pix_per_grid_w = img_width / grid_w
    pix_per_grid_h = img_height / grid_h
 
    intruth_size = len(intruth)
 
    new_truth = np.zeros((intruth_size,new_channels,grid_h,grid_w),dtype=np.int32)
+   # x = np.full((intruth_size,grid_h,grid_w),2)
+   # logger.info('new_truth: %s; full: %s',new_truth.shape,x.shape)
+
+   new_truth[:,1,:,:] = np.full((intruth_size,grid_h,grid_w),2)
 
    for img_num in range(intruth_size):
 
@@ -194,6 +213,10 @@ def convert_truth(intruth,img_width,img_height,grid_w,grid_h,new_channels=2):
                raise Exception('grid_y %s is not less than grid_h %s' % (grid_y,grid_h))
 
             new_truth[img_num,0,grid_y,grid_x] = obj_exists
-            new_truth[img_num,1,grid_y,grid_x] = np.argmax([np.sum(obj_truth[5:10]),np.sum(obj_truth[10:12])])
+            new_truth[img_num,1,grid_y,grid_x] = np.argmax([np.sum(obj_truth[5:10]),
+                                                            np.sum(obj_truth[10:12]),
+                                                            np.float(np.sum(obj_truth[5:12]) == 0)
+                                                           ]
+                                                          )
 
    return new_truth

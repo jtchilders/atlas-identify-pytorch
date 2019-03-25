@@ -116,7 +116,6 @@ def main():
    a = np.array(valid_batch_vs_loss)
    b = np.array(valid_batch_vs_grid_loss)
    c = np.array(valid_batch_vs_class_loss)
-   d = np.array(valid_batch_vs_accuracy)
 
    fig,(ax1,ax2) = plt.subplots(2)
 
@@ -124,13 +123,18 @@ def main():
    ax1.plot(y[...,0],y[...,1],label='grid loss')
    ax1.plot(z[...,0],z[...,1],label='class loss')
    ax1.legend(loc='upper center', shadow=False, fontsize='x-large')
+   ax1.grid(axis='y')
    ax1.set_yscale('log')
 
    ax2.plot(a[...,0],a[...,1],label='loss')
    ax2.plot(b[...,0],b[...,1],label='grid loss')
    ax2.plot(c[...,0],c[...,1],label='class loss')
-   ax2.plot(d[...,0],d[...,1],label='accuracy')
+
+   if len(valid_batch_vs_accuracy) > 0:
+      d = np.array(valid_batch_vs_accuracy)
+      ax2.plot(d[...,0],d[...,1],label='accuracy')
    ax2.legend(loc='upper center', shadow=False, fontsize='x-large')
+   ax2.grid(axis='y')
    ax2.set_yscale('log')
 
    plt.show()

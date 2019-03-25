@@ -107,7 +107,6 @@ class Net2D(nn.Module):
          {'type':'full','opts':{'nIn': 256,'nOut': 512,'filter_size':(3,3),'pool_size':(2,2)}},  # 13
          ]
 
-
       self.block_pars_postconnect = [
          {'type':'part','opts':{'nIn': 512,'nOut':1024,'filter_size':(3,3)}},  # 14
          {'type':'part','opts':{'nIn':1024,'nOut': 512,'filter_size':(1,1)}},  # 15
@@ -117,7 +116,6 @@ class Net2D(nn.Module):
          {'type':'part','opts':{'nIn':1024,'nOut':1024,'filter_size':(3,3)}},  # 19
          {'type':'part','opts':{'nIn':1024,'nOut':1024,'filter_size':(3,3)}},  # 20
          ]
-
 
       layer_number = 1
       self.preconnection = BlockSeries2D(self.block_pars_preconnect, layer_number)
