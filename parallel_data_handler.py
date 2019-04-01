@@ -7,19 +7,22 @@ logger = logging.getLogger(__name__)
 class BatchGenerator:
    def __init__(self,filelist,evt_per_file,
                 batch_size,img_shape,grid_shape,
-                num_classes):
+                num_classes,use_random=False,rank=0,nranks=1):
       self.filelist     = np.array(filelist)
       self.evt_per_file = evt_per_file
       self.batch_size   = batch_size
       self.img_shape    = img_shape   # (channel,height,width)
       self.grid_shape   = grid_shape  # (h,w)
       self.num_classes  = num_classes
+      self.rank         = rank
+      self.nranks       = nranks
+      self.use_random   = use_random
 
       self.total_images = self.evt_per_file * len(self.filelist)
-      self.total_batches = self.total_images // self.batch_size
+      self.total_batches = self.total_images // self.batch_size // self.nranks
       self.batches_per_file = self.evt_per_file // self.batch_size
 
-      self.use_random = False
+      self.files_per_rank = int(len(self.filelist) / self.nranks)
 
    def set_random_batch_retrieval(self,flag=True):
       self.use_random = flag
@@ -31,12 +34,17 @@ class BatchGenerator:
       if self.use_random:
          np.random.shuffle(self.filelist)
 
+      start_file_index = self.rank * self.files_per_rank
+      end_file_index = (self.rank + 1) * self.files_per_rank
+
+      logger.warning('rank %s processing files %s through %s',self.rank,start_file_index,end_file_index)
+      logger.warning('first file after shuffle: %s',self.filelist[0])
       image_counter = 0
       raw_coords = None
       raw_features = None
       truth_batch = None
 
-      for filename in self.filelist:
+      for filename in self.filelist[start_file_index:end_file_index]:
 
          file = FileGenerator(filename,self.img_shape,self.grid_shape)
 
@@ -153,6 +161,8 @@ def convert_truth(intruth,img_width,img_height,grid_w,grid_h,new_channels=2):
          obj_truth = img_truth[obj_num]
 
          obj_exists = obj_truth[0]
+         
+         # logger.info('%s = %s %s',img_num,obj_exists,obj_truth[5:])
 
          if obj_exists == 1:
 
@@ -163,13 +173,25 @@ def convert_truth(intruth,img_width,img_height,grid_w,grid_h,new_channels=2):
 
             grid_x = int(np.floor(obj_center_x))
             grid_y = int(np.floor(obj_center_y))
+            # logger.info('%s = %s %s    %s',img_num,grid_x,grid_y,obj_truth[1:5])
 
             if grid_x >= grid_w:
                raise Exception('grid_x %s is not less than grid_w %s' % (grid_x,grid_w))
             if grid_y >= grid_h:
                raise Exception('grid_y %s is not less than grid_h %s' % (grid_y,grid_h))
 
-            new_truth[img_num,0,grid_y,grid_x] = obj_exists
-            new_truth[img_num,1,grid_y,grid_x] = np.argmax([np.sum(obj_truth[5:10]),np.sum(obj_truth[10:12])])
+            if new_truth[img_num,0,grid_y,grid_x] == 1:
+               logger.warning('two ojects in the same grid found: image num = %s, image truth: \n%s',img_num,np.int32(img_truth))
+               continue
 
+            new_truth[img_num,0,grid_y,grid_x] = obj_exists
+            new_truth[img_num,1,grid_y,grid_x] = np.argmax([np.sum(obj_truth[5:10]),
+                                                            np.sum(obj_truth[10:12])
+                                                           ]
+                                                          )
+
+      if img_truth[:,0].sum() != new_truth[img_num,0,:,:].sum():
+         logger.warning('images have different content: %s != %s',img_truth[:,0].sum(),new_truth[img_num,0,:,:].sum())
+
+   logger.info('new_truth: %s  %s   %s',new_truth.shape,new_truth[:,0,:,:].sum(axis=1).sum(axis=1).mean(),new_truth.sum())
    return new_truth

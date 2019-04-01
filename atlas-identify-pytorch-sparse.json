@@ -1,0 +1,23 @@
+{
+   "data_handling": {
+      "train_glob":                    "/projects/atlasMLbjets/parton/numpy_data/zee2jets_sparse_calo2d/train/*",
+      "valid_glob":                    "/projects/atlasMLbjets/parton/numpy_data/zee2jets_sparse_calo2d/valid/*",
+      "evt_per_file":                  100,
+      "image_shape":                   [2, 256, 5760],
+      "shuffle":                       true,
+      "classes":                       ["jets","leptons"]
+   },
+   "training": {
+      "batch_size":                    20,
+      "learning_rate":                 0.001,
+      "momentum":                      0.9,
+      "beta_1":                        0.9,
+      "beta_2":                        0.999,
+      "epsilon":                       null,
+      "decay":                         0.0001,
+      "epochs":                        10,
+      "verbose":                       1,
+      "steps_per_valid":               100,
+      "lrsched":                       [1e-4,5e-4,5e-4,1e-4,1e-4,5e-5,5e-5,1e-5,1e-5,1e-5,1e-5,5e-6,5e-6,5e-6,5e-6,5e-6]
+   }
+}

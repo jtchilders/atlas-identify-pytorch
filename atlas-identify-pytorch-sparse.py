@@ -1,9 +1,9 @@
 #!/usr/bin/env python
-import argparse, logging, glob, socket
+import argparse,logging,glob,socket,json
 import numpy as np
-import cfg,time,loss_func
+import time,loss_func
 #from data_handler_calo2d_sparse_npz import BatchGenerator
-from parallel_data_handler_v2 import BatchGenerator
+from parallel_data_handler import BatchGenerator
 import torch
 from model_calo2d_yolo_sparse import Net2D
 from torch import optim
@@ -15,7 +15,7 @@ def main():
    ''' simple starter program that can be copied for use when starting a new script. '''
 
    parser = argparse.ArgumentParser(description='')
-   parser.add_argument('-c','--config_file',help='input',required=True)
+   parser.add_argument('-c','--config_file',help='configuration file in json format',required=True)
    parser.add_argument('--num_files','-n', default=-1, type=int,
                        help='limit the number of files to process. default is all')
    parser.add_argument('--model_save',default='model_saves',help='base name of saved model parameters for later loading')
@@ -88,10 +88,13 @@ def main():
 
    np.random.seed(args.random_seed)
 
-   blocks = cfg.parse_cfg(args.config_file)
-   input_shape = [int(blocks[0]['height']),int(blocks[0]['width'])]
-   input_channels = int(blocks[0]['channels'])
-   logger.info(' input_shape: %s  input_channels: %s',input_shape,input_channels)
+   config_file = json.load(open(args.config_file))
+   config_file['rank'] = rank
+   config_file['nranks'] = nranks
+   
+   input_shape = config_file['data_handling']['image_shape'][1:3]
+   input_channels = config_file['data_handling']['image_shape'][0]
+   logger.info(' input_shape: %s',config_file['data_handling']['image_shape'])
    net = Net2D(input_shape,input_channels)
    summary_string,output_shape,output_channels = summary(input_shape,input_channels,net)
    logger.info('model: \n%s',summary_string)
@@ -105,17 +108,16 @@ def main():
       hvd.broadcast_parameters(net.state_dict(),root_rank=0)
 
    if args.batch > 0:
-      blocks[0]['batch'] = args.batch
-   net_opts = blocks[0]
+      config_file['training']['batch_size'] = args.batch
 
    logger.info('getting filelists')
-   trainlist,validlist = get_filelist(net_opts,args,rank,nranks)
+   trainlist,validlist = get_filelist(config_file,args)
 
-   evt_per_file = int(net_opts['evt_per_file'])
-   batch_size   = int(net_opts['batch'])
-   img_shape    = [int(net_opts['channels']),int(net_opts['height']),int(net_opts['width'])]
+   evt_per_file = config_file['data_handling']['evt_per_file']
+   batch_size   = config_file['training']['batch_size']
+   img_shape    = config_file['data_handling']['image_shape']
    grid_shape   = net.grid
-   num_classes  = int(net_opts['classes'])
+   num_classes  = len(config_file['data_handling']['classes'])
    logger.info('evt_per_file:       %s',evt_per_file)
    logger.info('batch_size:         %s',batch_size)
    logger.info('img_shape:          %s',img_shape)
@@ -125,20 +127,20 @@ def main():
    logger.info('creating batch generators')
    trainds = BatchGenerator(trainlist,evt_per_file,
                             batch_size,img_shape,grid_shape,
-                            num_classes)
-   #trainds.set_random_batch_retrieval()
+                            num_classes,True,rank,nranks)
    validds = BatchGenerator(validlist,evt_per_file,
                             batch_size,img_shape,grid_shape,
                             num_classes)
-   validds.start_file_pool(1)
+   # validds.start_file_pool(1)
+   validds_itr = validds.batch_gen()
    net_loss = loss_func.ClassOnlyLoss()
 
-   optimizer = optim.SGD(net.parameters(),lr=float(net_opts['learning_rate']), momentum=float(net_opts['momentum']))
-   scheduler = torch.optim.lr_scheduler.StepLR(optimizer,2,0.1)
+   optimizer = optim.SGD(net.parameters(),lr=config_file['training']['learning_rate'], momentum=config_file['training']['momentum'])
+   scheduler = torch.optim.lr_scheduler.StepLR(optimizer,1,0.5)
    if args.horovod:
       optimizer = hvd.DistributedOptimizer(optimizer,named_parameters=net.named_parameters())
 
-   accuracyCalc = loss_func.ClassOnlyAccuracy()
+   accuracyCalc = loss_func.ClassOnlyAccuracy(net.grid,input_shape)
 
    data_time = CalcMean()
    batch_time = CalcMean()
@@ -148,7 +150,7 @@ def main():
    for epoch in range(args.epochs):
       logger.info(' epoch %s',epoch)
       scheduler.step()
-      trainds.start_file_pool()
+      # trainds.start_file_pool()
 
       for param_group in optimizer.param_groups:
          logging.info('learning rate: %s',param_group['lr'])
@@ -156,19 +158,22 @@ def main():
       net.train()
       batch_counter = 0
       for batch_data in trainds.batch_gen():
-         # logger.warning('got training batch %s',batch_counter)
+         logger.debug('got training batch %s',batch_counter)
          start_batch = time.time()
          inputs = batch_data['images']
          targets = batch_data['truth']
 
-         # logger.info('inputs: %s,%s targets: %s',inputs[0].shape,inputs[1].shape,targets.shape)
+         logger.debug('inputs: %s,%s targets: %s',inputs[0].shape,inputs[1].shape,targets.shape)
 
          start_forward = time.time()
 
          optimizer.zero_grad()
+         logger.debug('zeroed opt')
          outputs = net(inputs)
+         logger.debug('got outputs')
 
          grid_id_loss,class_loss = net_loss(outputs,targets)
+         logger.debug('got loss')
          loss = grid_id_loss + class_loss
 
          start_backward = time.time()
@@ -195,25 +200,30 @@ def main():
                logger.info('running validation')
                net.eval()
 
-               if validds.reached_end:
-                  logger.warning('restarting validation file pool.')
-                  validds.start_file_pool(1)
+               # if validds.reached_end:
+               #    logger.warning('restarting validation file pool.')
+               #    validds.start_file_pool(1)
 
-               valid_counter = 0
-               for batch_data in validds.batch_gen():
+               for _ in range(args.nval_tests):
 
+                  try:
+                     batch_data = next(validds_itr)
+                  except StopIteration:
+                     validds_itr = validds.batch_gen()
+                     batch_data = next(validds_itr)
+                  
                   inputs = batch_data['images']
                   targets = batch_data['truth']
+                  logger.debug('valid inputs: %s,%s targets: %s',inputs[0].shape,inputs[1].shape,targets.shape)
+
                   outputs = net(inputs)
-                  acc = accuracyCalc.eval_acc(outputs,targets)
+                  true_positive_accuracy,true_or_false_positive_accuracy,filled_grids_accuracy = accuracyCalc.eval_acc(outputs,targets,inputs)
 
                   grid_id_loss,class_loss = net_loss(outputs,targets)
                   loss = grid_id_loss + class_loss
 
-                  logger.info('valid loss: %6.4f + %6.4f = %6.4f accuracy: %s',grid_id_loss.item(),class_loss.item(),loss.item(),acc)
-                  valid_counter += 1
-                  if valid_counter >= args.nval_tests: break
-
+                  logger.info('valid loss: %6.4f + %6.4f = %6.4f true_positive_accuracy: %6.4f true_or_false_positive_accuracy: %6.4f  filled_grids_accuracy: %6.4f',grid_id_loss.item(),class_loss.item(),loss.item(),true_positive_accuracy,true_or_false_positive_accuracy,filled_grids_accuracy)
+                  
                net.train()
 
             if batch_counter % args.nsave == 0:
@@ -297,40 +307,20 @@ def main():
 '''
             
 
-def get_filelist(net_opts,args,rank,nranks):
+def get_filelist(config_file,args):
    # get file list
-   logger.info('glob dir: %s',net_opts['inglob'])
-   filelist = sorted(glob.glob(net_opts['inglob']))
-   logger.info('found %s input files',len(filelist))
-   if len(filelist) < 2:
-      raise Exception('length of file list needs to be at least 2 to have train & validate samples')
+   logger.info('train glob dir: %s',config_file['data_handling']['train_glob'])
+   logger.info('valid glob dir: %s',config_file['data_handling']['valid_glob'])
+   train_filelist = sorted(glob.glob(config_file['data_handling']['train_glob']))
+   valid_filelist = sorted(glob.glob(config_file['data_handling']['valid_glob']))
+   logger.info('found %s training files, %s validation files',len(train_filelist),len(valid_filelist))
 
-   nfiles = len(filelist)
-   if args.num_files > 0:
-      nfiles = args.num_files
+   if len(train_filelist) < 1 or len(valid_filelist) < 1:
+      raise Exception('length of file list needs to be at least 1 for train (%s) and val (%s) samples',len(train_filelist),len(valid_filelist))
 
-   train_file_index = int(float(net_opts['train_fraction']) * nfiles)
-   first_file = filelist[0]
-   np.random.shuffle(filelist)
-   assert first_file != filelist[0]
+   logger.warning('first file: %s',train_filelist[0])
 
-   logger.warning('first file: %s',first_file)
-
-   train_imgs = filelist[:train_file_index]
-   valid_imgs = filelist[train_file_index:nfiles]
-   logger.info('training index: %s',train_file_index)
-   while len(valid_imgs) * int(net_opts['evt_per_file']) / int(net_opts['batch']) < 1.:
-      logger.info('training index: %s',train_file_index)
-      train_file_index -= 1
-      train_imgs = filelist[:train_file_index]
-      valid_imgs = filelist[train_file_index:nfiles]
-
-   files_per_rank = len(train_imgs) // nranks
-   train_imgs = train_imgs[files_per_rank * rank:files_per_rank * (rank + 1)]
-
-   logger.info('training files: %s; validation files: %s',len(train_imgs),len(valid_imgs))
-
-   return train_imgs,valid_imgs
+   return train_filelist,valid_filelist
 
 
 def print_module(module,input_shape,input_channels,name=None,indent=0):
